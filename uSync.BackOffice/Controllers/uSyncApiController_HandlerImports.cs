@@ -1,7 +1,11 @@
 ﻿using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
+using Lucene.Net.Store;
+
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 using Umbraco.Cms.Web.BackOffice.Controllers;
 
@@ -62,8 +66,11 @@ namespace uSync.BackOffice.Controllers
                 {
                     Callbacks = hubClient.Callbacks(),
                     HandlerSet = handlerSet,
-                    RootFolder = _uSyncConfig.GetRootFolder(),                    
-                });
+                    RootFolder = GetValidImportFolder(options.Folder),                    
+                }).ToList();
+
+            if (_uSyncConfig.Settings.SummaryDashboard || actions.Count > _uSyncConfig.Settings.SummaryLimit)
+                actions = actions.ConvertToSummary(_uSyncConfig.Settings.SummaryDashboard).ToList();
 
             return new SyncActionResult(actions);
         }
@@ -87,10 +94,13 @@ namespace uSync.BackOffice.Controllers
             { 
                 Callbacks = hubClient.Callbacks(),
                 HandlerSet = handlerSet,
-                RootFolder = _uSyncConfig.GetRootFolder(),
+                RootFolder = GetValidImportFolder(options.Folder),
                 PauseDuringImport = true,
                 Flags = options.Force ? Core.Serialization.SerializerFlags.Force : Core.Serialization.SerializerFlags.None
-            });
+            }).ToList();
+
+            if (_uSyncConfig.Settings.SummaryDashboard || actions.Count > _uSyncConfig.Settings.SummaryLimit)
+                actions = actions.ConvertToSummary(_uSyncConfig.Settings.SummaryDashboard).ToList();
 
             return new SyncActionResult(actions);
         }
@@ -107,7 +117,7 @@ namespace uSync.BackOffice.Controllers
                 ? options.Set : _uSyncConfig.Settings.DefaultSet;
 
             var actions = _uSyncService.PerformPostImport(
-                _uSyncConfig.GetRootFolder(), 
+                GetValidImportFolder(options.Folder), 
                 handlerSet, 
                 options.Actions);
 
@@ -147,8 +157,11 @@ namespace uSync.BackOffice.Controllers
             {
                 Callbacks = hubClient.Callbacks(),
                 HandlerSet = handlerSet,
-                RootFolder = _uSyncConfig.GetRootFolder()
-            });
+                RootFolder = GetValidImportFolder(options.Folder)
+            }).ToList();
+
+            if (_uSyncConfig.Settings.SummaryDashboard || actions.Count > _uSyncConfig.Settings.SummaryLimit)
+                actions = actions.ConvertToSummary(_uSyncConfig.Settings.SummaryDashboard).ToList();
 
             return new SyncActionResult(actions);
         }
@@ -169,5 +182,30 @@ namespace uSync.BackOffice.Controllers
         [HttpPost]
         public void FinishProcess([FromQuery]HandlerActions action, IEnumerable<uSyncAction> actions)
             => _uSyncService.FinishBulkProcess(action, actions);
+
+
+
+
+        private string GetValidImportFolder(string folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder)) return _uSyncConfig.GetRootFolder();
+
+            // else check its a valid folder. 
+            var fullPath = _syncFileService.GetAbsPath(folder);
+            var fullRoot = _syncFileService.GetAbsPath(_uSyncConfig.GetRootFolder());
+
+
+            var rootParent = Path.GetDirectoryName(fullRoot.TrimEnd(new char[] {'/', '\\'}));
+            _logger.LogDebug("Import Folder: {fullPath} {rootPath} {fullRoot}", fullPath, rootParent, fullRoot);
+
+            if (fullPath.StartsWith(rootParent))
+            {
+                _logger.LogInformation("Using Custom Folder: {fullPath}", folder);
+                return folder;
+            }
+
+
+            return string.Empty;
+        }
     }
 }
